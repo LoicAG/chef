@@ -86,8 +86,8 @@ class Chef
       )
     end
 
-    # The hash representation of the object.  Includes the name and public_key,
-    # but never the private key.
+    # The hash representation of the object. Includes the name and public_key.
+    # Private key is included if available.
     #
     # @return [Hash]
     def to_hash
@@ -98,6 +98,7 @@ class Chef
         'json_class' => self.class.name,
         "chef_type" => "client"
       }
+      result["private_key"] = @private_key if @private_key
       result
     end
 
@@ -111,9 +112,15 @@ class Chef
     def self.json_create(o)
       client = Chef::ApiClient.new
       client.name(o["name"] || o["clientname"])
+      client.private_key(o["private_key"]) if o.key?("private_key")
       client.public_key(o["public_key"])
       client.admin(o["admin"])
       client
+    end
+
+    def self.reregister(name)
+      api_client = load(name)
+      api_client.reregister
     end
 
     def self.list(inflate=false)
@@ -131,7 +138,7 @@ class Chef
 
     # Load a client by name via the API
     def self.load(name)
-      response = Chef::REST.new(Chef::Config[:chef_server_url]).get_rest("clients/#{name}")
+      response = Chef::REST.new(Chef::Config[:chef_server_url]).get("clients/#{name}")
       if response.kind_of?(Chef::ApiClient)
         response
       else
@@ -166,6 +173,17 @@ class Chef
       end
     end
 
+    def reregister
+      r = Chef::REST.new(Chef::Config[:chef_server_url])
+      reregistered_self = r.put("clients/#{name}", { :name => name, :admin => admin, :private_key => true })
+      if reregistered_self.respond_to?(:[])
+        private_key(reregistered_self["private_key"])
+      else
+        private_key(reregistered_self.private_key)
+      end
+      self
+    end
+
     # Create the client via the REST API
     def create
       Chef::REST.new(Chef::Config[:chef_server_url]).post_rest("clients", self)
@@ -174,6 +192,11 @@ class Chef
     # As a string
     def to_s
       "client[#{@name}]"
+    end
+
+    def inspect
+      "Chef::ApiClient name:'#{name}' admin:'#{admin.inspect}'" +
+      "public_key:'#{public_key}' private_key:#{private_key}"
     end
 
   end

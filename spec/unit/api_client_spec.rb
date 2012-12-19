@@ -100,63 +100,139 @@ describe Chef::ApiClient do
     end
   end
 
-  describe "serialize" do
+  describe "when serializing to JSON" do
     before(:each) do
       @client.name("black")
       @client.public_key("crowes")
+      @json = @client.to_json
+    end
+
+    it "serializes as a JSON object" do
+      @json.should match(/^\{.+\}$/)
+    end
+
+    it "includes the name value" do
+      @json.should include(%q{"name":"black"})
+    end
+
+    it "includes the public key value" do
+      @json.should include(%{"public_key":"crowes"})
+    end
+
+    it "includes the 'admin' flag" do
+      @json.should include(%q{"admin":false})
+    end
+
+    it "includes the private key when present" do
       @client.private_key("monkeypants")
-      @serial = @client.to_json
+      @client.to_json.should include(%q{"private_key":"monkeypants"})
     end
 
-    it "should serialize to a json hash" do
-      @client.to_json.should match(/^\{.+\}$/)
-    end
-
-    %w{
-      name
-      public_key
-    }.each do |t|
-      it "should include '#{t}'" do
-        @serial.should =~ /"#{t}":"#{@client.send(t.to_sym)}"/
-      end
-    end
-
-    it "should include 'admin'" do
-      @serial.should =~ /"admin":false/
-    end
-
-    it "should not include the private key" do
-      @serial.should_not =~ /"private_key":/
+    it "does not include the private key if not present" do
+      @json.should_not include("private_key")
     end
   end
 
-  describe "deserialize" do
+  describe "when deserializing from JSON" do
     before(:each) do
-      @client.name("black")
-      @client.public_key("crowes")
-      @client.private_key("monkeypants")
-      @client.admin(true)
-      @deserial = Chef::JSONCompat.from_json(@client.to_json)
+      client = {
+      "name" => "black",
+      "public_key" => "crowes",
+      "private_key" => "monkeypants",
+      "admin" => true,
+      "json_class" => "Chef::ApiClient"
+      }
+      @client = Chef::JSONCompat.from_json(client.to_json)
     end
 
     it "should deserialize to a Chef::ApiClient object" do
-      @deserial.should be_a_kind_of(Chef::ApiClient)
+      @client.should be_a_kind_of(Chef::ApiClient)
     end
 
-    %w{
-      name
-      public_key
-      admin
-    }.each do |t|
-      it "should match '#{t}'" do
-        @deserial.send(t.to_sym).should == @client.send(t.to_sym)
+    it "preserves the name" do
+      @client.name.should == "black"
+    end
+
+    it "preserves the public key" do
+      @client.public_key.should == "crowes"
+    end
+
+    it "preserves the admin status" do
+      @client.admin.should be_true
+    end
+
+    it "includes the private key if present" do
+      @client.private_key.should == "monkeypants"
+    end
+
+  end
+
+  describe "when requesting a new key" do
+    before do
+      @http_client = mock("Chef::REST mock")
+      Chef::REST.stub!(:new).and_return(@http_client)
+    end
+
+    context "and the client does not exist on the server" do
+      before do
+        @a_404_response = Net::HTTPNotFound.new("404 not found and such", nil, nil)
+        @a_404_exception = Net::HTTPServerException.new("404 not found exception", @a_404_response)
+
+        @http_client.should_receive(:get).with("clients/lost-my-key").and_raise(@a_404_exception)
+      end
+
+      it "raises a 404 error" do
+        lambda { Chef::ApiClient.reregister("lost-my-key") }.should raise_error(Net::HTTPServerException)
       end
     end
 
-    it "should not include the private key" do
-      @deserial.private_key.should == nil
-    end
+    context "and the client exists" do
+      before do
+        @api_client_without_key = Chef::ApiClient.new
+        @api_client_without_key.name("lost-my-key")
+        @http_client.should_receive(:get).with("clients/lost-my-key").and_return(@api_client_without_key)
+      end
 
+
+      context "and the client exists on a Chef 11-like server" do
+        before do
+          @api_client_with_key = Chef::ApiClient.new
+          @api_client_with_key.name("lost-my-key")
+          @api_client_with_key.private_key("the new private key")
+          @http_client.should_receive(:put).
+            with("clients/lost-my-key", :name => "lost-my-key", :admin => false, :private_key => true).
+            and_return(@api_client_with_key)
+        end
+
+        it "returns an ApiClient with a private key" do
+          response = Chef::ApiClient.reregister("lost-my-key")
+          # no sane == method for ApiClient :'(
+          response.should == @api_client_without_key
+          response.private_key.should == "the new private key"
+          response.name.should == "lost-my-key"
+          response.admin.should be_false
+        end
+      end
+
+      context "and the client exists on a Chef 10-like server" do
+        before do
+          @api_client_with_key = {"name" => "lost-my-key", "private_key" => "the new private key"}
+          @http_client.should_receive(:put).
+            with("clients/lost-my-key", :name => "lost-my-key", :admin => false, :private_key => true).
+            and_return(@api_client_with_key)
+        end
+
+        it "returns an ApiClient with a private key" do
+          response = Chef::ApiClient.reregister("lost-my-key")
+          # no sane == method for ApiClient :'(
+          response.should == @api_client_without_key
+          response.private_key.should == "the new private key"
+          response.name.should == "lost-my-key"
+          response.admin.should be_false
+        end
+      end
+
+    end
   end
 end
 

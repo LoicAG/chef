@@ -26,7 +26,6 @@ class Chef
   class Provider
     include Chef::DSL::Recipe
     include Chef::Mixin::WhyRun
-    include Chef::Mixin::EnforceOwnershipAndPermissions
 
     attr_accessor :new_resource
     attr_accessor :current_resource
@@ -38,10 +37,6 @@ class Chef
     # changing the arity would be a breaking change. Change this at the next
     # break, e.g., Chef 11.
     attr_accessor :action
-
-    def whyrun_supported?
-      false
-    end
 
     def initialize(new_resource, run_context)
       @new_resource = new_resource
